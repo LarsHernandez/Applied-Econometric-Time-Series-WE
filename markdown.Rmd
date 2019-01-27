@@ -1,0 +1,120 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Advanced Econometrics Exam - 2016
+Lars H. Nielsen
+
+### Opgaver
+1. ARMA og ARIMA modeller [30%]
+2. Kointegration og fejlkorrektion [20%]
+3. Volalitetsmodeller [25%]
+4. Vektorautoregressive modeller [25%]
+
+Data findes i en række CSV filer: volatilitet.csv, VektorAutoregressiv.csv, renter.csv, bnpdef.csv
+
+```{r}
+suppressMessages(library(tidyverse)) # Readr, ggplot, dplyr, ...
+suppressMessages(library(gridExtra)) # Arrangning ggplots
+suppressMessages(library(readxl))    # Loading excel
+suppressMessages(library(repr))      # Resizing the plots in jupyter
+suppressMessages(library(rugarch))   # For ARCH and GARCH models
+suppressMessages(library(dynlm))     # Lagged linear models
+suppressMessages(library(urca))      # Dick Fuller test
+suppressMessages(library(car))       # Linear hyphothesis testing
+suppressMessages(library(tseries))   # Adf-test
+suppressMessages(library(vars))      # VAR models
+suppressMessages(library(zoo))       # Convert quarters to date
+suppressMessages(library(forecast))  # Help in plotting TS
+suppressMessages(library(fGarch))    # The library Lasse uses to do GARCH
+suppressMessages(library(expm))      # Matrix calculations 
+
+options(repr.plot.width=8, repr.plot.height=2.5)
+options(warn=-1) # Carefull this disables all warnings
+```
+
+# Simulations
+First number of simulations should be set sufficiently high, this should be several thousand since we're not estimating the mean but the upper and lower quantiles. This is computationally heavy and therefore start with 1000, which should be <5 min. 
+
+Sample size should be set according to the dataset
+
+**Dickey Fuller test**
+
+$$
+\begin{aligned}
+\Delta y_t = a_0 + \gamma y_{t-1} + a_2t + \varepsilon_t \qquad \qquad
+\gamma &= 0 \qquad \tau_1 \\
+a_2 = \gamma &= 0 \qquad \phi_3 \\
+a_0 = a_2 = \gamma &= 0 \qquad \phi_2 \\
+\\
+\Delta y_t = a_0 + \gamma y_{t-1} + \varepsilon_t \qquad \qquad
+\gamma &= 0 \qquad \tau_2 \\
+a_0 = \gamma  &= 0 \qquad \phi_1 \\
+\\
+\Delta y_t = \gamma y_{t-1} + \varepsilon_t \qquad \qquad
+\gamma &= 0 \qquad \tau_3 \\
+\end{aligned}
+$$
+
+**Augmented Dickey Fuller test**
+
+$$
+\Delta y_t = a_0 + \gamma y_{t-1} + a_2t + \sum^p_{i=2}\beta_i\Delta y_{t-i+1} + \varepsilon_t
+$$
+
+Remember the $H_0$ is always that the process contains a unit root, therefore if we can reject it we conclude that the series is stationary and ready for further analisis. 
+
+```{r}
+nsim <- 5000
+nsample <- 100
+
+subt <- paste(nsim, "simulations  -", nsample,"samples in each") # for use in plotting
+```
+
+
+# Different data generating processes
+For difference stationary series (series containing a unit root) shocks are permanent and they might wander far from the trend, this is not true for stationary and trend stationary series, it can be hard to see the difference in the plots below, but if you are not convinced extend the sample size from 100 to 1000 and it will be clear that the stationary series has a constant variance opposed to the series containing an unit root.
+
+All four series might also include a drift term (intercept other than 0), this will not change wether the processes contain a unit root or not, but is important when it comes to deciding which deterministic components to include in the Dickey Fuller test.
+
+For all four series 95 % confidence interval are plottet, $1.96 * SD$, for the unit root standard deviation is equal to $\sqrt{t}$ for the AR(2) process used to plot the stationary series $y_t = 0.6y_{t-1} + 0.3y_{t-2} + \varepsilon_t$ the variance is calculated as $Var(y_t) = \sigma^2 (1+\beta^2_1 + \beta^2_2)$
+
+```{r fig.height=4, fig.width=9}
+a1 <- ggplot(data.frame(x = 1:100, b = cumsum(rnorm(100)), sd = sqrt(1:100), t = 1), aes(x, b)) + 
+  geom_line() + geom_line(aes(x, t), color = "#045a8d", linetype = "dashed") + 
+  geom_ribbon(aes(ymin = t - sd * 1.96, ymax = t + sd * 1.96), alpha = 0.09, fill = "#045a8d") + 
+  scale_y_continuous(limits = c(-30, 30), breaks = seq(-30, 30, 10)) +
+  labs(title = "Difference stationary (random walk)", x = "", y = "", subtitle = "Unit root process")
+
+a2 <- ggplot(data.frame(x = 1:100, b = cumsum(rnorm(100) + 0.3), sd = sqrt(1:100), t = 0.3 * 1:100), aes(x, b)) + 
+  geom_line() + geom_line(aes(x, t), color = "#045a8d", linetype = "dashed") + 
+  geom_ribbon(aes(ymin = t - sd * 1.96, ymax = t + sd * 1.96), alpha = 0.09, fill = "#045a8d") + 
+  scale_y_continuous(limits = c(-10, 50), breaks = seq(-10, 50, 10)) +
+  labs(title = "Difference stationary (stochastic trend)", x = "", y = "", subtitle = "Unit root process")
+
+sim <- arima.sim(n = 100, list(ar = c(0.6, 0.3)))
+a3 <- ggplot(data.frame(x = 1:100, sim, sd = sqrt(1 * (1 + 0.6^2 + 0.3^2)), d = 0), aes(x, sim)) + 
+  geom_line() + geom_line(aes(x, d), color = "#045a8d", linetype = "dashed") + 
+  geom_ribbon(aes(ymin = d - sd * 1.96, ymax = d + sd * 1.96), alpha = 0.09, fill = "#045a8d") + 
+  scale_y_continuous(limits = c(-15, 15), breaks = seq(-15, 15, 5)) +
+  labs(title = "Stationary", x = "", y = "", subtitle = "Doesn't contain unit root")
+
+sim2 <- arima.sim(n = 100, list(ar = c(0.6, 0.3))) 
+a4 <- ggplot(data.frame(x = 1:100, sim2 = sim2 + 1:100 * 0.2, sd = sqrt(1 * (1 + 0.6^2 + 0.3^2)), d = 0 + 1:100 * 0.2), aes(x, sim2)) + 
+  geom_line() + geom_line(aes(x, d), color = "#045a8d", linetype = "dashed") + 
+  geom_ribbon(aes(ymin = d - sd * 1.96, ymax = d + sd * 1.96), alpha = 0.09, fill = "#045a8d") + 
+  scale_y_continuous(limits = c(-5, 25), breaks = seq(-5, 25, 5)) +
+  labs(title = "Trend stationary (deterministic trend)", x = "", y = "", subtitle = "Doesn't contain unit root")
+
+grid.arrange(a1, a2, a3, a4, ncol = 2)
+```
+
+
+
+
+
+
+
